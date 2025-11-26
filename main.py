@@ -93,6 +93,80 @@ class Database:
         logger.info("База данных инициализирована")
 
 
+# Command /add
+async def add_channel(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+
+    if not context.args:
+        await update.message.reply_text(
+            "❌ Укажите имя канала.\n"
+            "Пример: /add @mychannel"
+        )
+        return
+
+    channel_username = context.args[0].strip()
+    if not channel_username.startswith('@'):
+        channel_username = '@' + channel_username
+
+    try:
+        # Getting information about the channel
+        chat = await context.bot.get_chat(channel_username)
+
+        # Checking if the bot is an administrator
+        try:
+            bot_member = await context.bot.get_chat_member(chat.id, context.bot.id)
+            if bot_member.status not in ['administrator', 'creator']:
+                await update.message.reply_text(
+                    f"⚠️ Добавьте бота @{context.bot.username} администратором канала {channel_username} "
+                    "с правом чтения сообщений, затем повторите команду."
+                )
+                return
+        except Exception:
+            await update.message.reply_text(
+                f"⚠️ Добавьте бота @{context.bot.username} администратором канала {channel_username}, "
+                "затем повторите команду."
+            )
+            return
+
+        # We get the number of subscribers
+        member_count = await context.bot.get_chat_member_count(chat.id)
+
+        # Save in the database
+        conn = Database.get_connection()
+        if not conn:
+            await update.message.reply_text("❌ Ошибка подключения к базе данных")
+            return
+
+        cursor = conn.cursor()
+
+        try:
+            cursor.execute(
+                "INSERT INTO channels (channel_username, channel_id, owner_user_id, subscriber_count) "
+                "VALUES (%s, %s, %s, %s)",
+                (channel_username, chat.id, user_id, member_count)
+            )
+            conn.commit()
+
+            await update.message.reply_text(
+                f"✅ Канал {channel_username} добавлен!\n"
+                f"👥 Подписчиков: {member_count}"
+            )
+        except mysql.connector.IntegrityError:
+            await update.message.reply_text(
+                f"❌ Канал {channel_username} уже добавлен в каталог"
+            )
+        finally:
+            cursor.close()
+            conn.close()
+
+    except Exception as e:
+        logger.error(f"Error adding channel: {e}")
+        await update.message.reply_text(
+            f"❌ Не удалось получить информацию о канале {channel_username}.\n"
+            "Проверьте правильность имени и что канал публичный."
+        )
+
+
 # Command /start
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
@@ -111,7 +185,7 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 /delete *[канал]* - Удалить канал из каталога
 /update *[канал]* - Обновить количество подписчиков
 /find *[канал]* - Найти похожие каналы для обмена
-/done *[канал]* - Сообщить о выполненном репосте
+/done *[канал]* - Сообщить владельцу канала о выполненном репосте
 /confirm *[свой_канал]* *[канал_репоста]* - Подтвердить репост
 /list - Список каналов, ожидающих подтверждения
 /abuse *[канал]* *[причина]* - Пожаловаться на канал и владельца
@@ -125,6 +199,37 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 5. Владелец канала подтвердит /confirm
     """
     await update.message.reply_text(help_text, parse_mode='Markdown')
+
+
+# Command /my
+async def my_channels(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+
+    conn = Database.get_connection()
+    if not conn:
+        await update.message.reply_text("❌ Ошибка. Пожалуйста, попробуйте повторить попытку позже.")
+        return
+
+    cursor = conn.cursor(dictionary=True)
+    cursor.execute(
+        "SELECT channel_username, subscriber_count, added_date "
+        "FROM channels WHERE owner_user_id = %s ORDER BY added_date DESC",
+        (user_id,)
+    )
+
+    channels = cursor.fetchall()
+    cursor.close()
+    conn.close()
+
+    if not channels:
+        await update.message.reply_text("📭 У вас нет добавленных каналов")
+        return
+
+    text = "📋 *Ваши каналы:*\n\n"
+    for ch in channels:
+        text += f"• {ch['channel_username']} - 👥 {ch['subscriber_count']} подписчиков\n"
+
+    await update.message.reply_text(text, parse_mode='Markdown')
 
 
 # Error handler
@@ -142,8 +247,8 @@ def main():
     # Registering command handlers
     application.add_handler(CommandHandler("start", start))
     application.add_handler(CommandHandler("help", help_command))
-    # application.add_handler(CommandHandler("add", add_channel))
-    # application.add_handler(CommandHandler("my", my_channels))
+    application.add_handler(CommandHandler("add", add_channel))
+    application.add_handler(CommandHandler("my", my_channels))
     # application.add_handler(CommandHandler("delete", delete_channel))
     # application.add_handler(CommandHandler("update", update_channel_stats))
     # application.add_handler(CommandHandler("find", find_channels))
