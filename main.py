@@ -121,7 +121,7 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 1. Добавьте свой канал командой /add
 2. Найдите похожие каналы /find
 3. Подпишитесь и сделайте репост
-4. Сообщите /done после репоста
+4. Сообщите /done после репоста любого поста
 5. Владелец канала подтвердит /confirm
     """
     await update.message.reply_text(help_text, parse_mode='Markdown')
@@ -279,6 +279,83 @@ async def delete_channel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(f"✅ Канал {channel_username} удалён из каталога.")
 
 
+# Команда /update
+async def update_channel_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+
+    if not context.args:
+        await update.message.reply_text(
+            "❌ Укажите имя канала.\n"
+            "Пример: /update @mychannel"
+        )
+        return
+
+    channel_username = context.args[0].strip()
+    if not channel_username.startswith('@'):
+        channel_username = '@' + channel_username
+
+    conn = Database.get_connection()
+    if not conn:
+        await update.message.reply_text("❌ Ошибка. Пожалуйста, попробуйте повторить попытку позже.")
+        return
+
+    cursor = conn.cursor(dictionary=True)
+
+    # Checking if the user is the owner
+    cursor.execute(
+        "SELECT channel_id, subscriber_count FROM channels WHERE channel_username = %s AND owner_user_id = %s",
+        (channel_username, user_id)
+    )
+
+    channel_data = cursor.fetchone()
+    if not channel_data:
+        await update.message.reply_text(
+            f"❌ Канал {channel_username} не найден или вы не являетесь владельцем."
+        )
+        cursor.close()
+        conn.close()
+        return
+
+    old_count = channel_data['subscriber_count']
+
+    # We get the current number of subscribers
+    try:
+        chat = await context.bot.get_chat(channel_username)
+        new_count = await context.bot.get_chat_member_count(chat.id)
+
+        # Обновляем в базе данных
+        cursor.execute(
+            "UPDATE channels SET subscriber_count = %s WHERE channel_username = %s",
+            (new_count, channel_username)
+        )
+        conn.commit()
+
+        difference = new_count - old_count
+        if difference > 0:
+            change_text = f"📈 +{difference}"
+        elif difference < 0:
+            change_text = f"📉 {difference}"
+        else:
+            change_text = "➡️ без изменений"
+
+        await update.message.reply_text(
+            f"✅ Статистика канала {channel_username} обновлена!\n\n"
+            f"👥 Было: {old_count}\n"
+            f"👥 Стало: {new_count}\n"
+            f"{change_text}"
+        )
+
+    except Exception as e:
+        logger.error(f"Ошибка при обновлении статистики канала: {e}")
+        await update.message.reply_text(
+            f"❌ Не удалось получить информацию о канале {channel_username}.\n"
+            "Убедитесь, что бот всё ещё является администратором канала."
+        )
+    finally:
+        cursor.close()
+        conn.close()
+
+
 # Error handler
 async def error_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     logger.error(f"Update {update} caused error {context.error}")
@@ -297,7 +374,7 @@ def main():
     application.add_handler(CommandHandler("add", add_channel))
     application.add_handler(CommandHandler("my", my_channels))
     application.add_handler(CommandHandler("delete", delete_channel))
-    # application.add_handler(CommandHandler("update", update_channel_stats))
+    application.add_handler(CommandHandler("update", update_channel_stats))
     # application.add_handler(CommandHandler("find", find_channels))
     # application.add_handler(CommandHandler("done", done_repost))
     # application.add_handler(CommandHandler("confirm", confirm_repost))
