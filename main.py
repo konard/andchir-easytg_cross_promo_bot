@@ -1,4 +1,5 @@
 import logging
+import math
 import os
 
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
@@ -396,6 +397,7 @@ async def find_channels(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     target_count = result['subscriber_count']
+    diff = math.ceil(max(target_count, 100) * 0.2)
 
     # Looking for similar channels (±100 subscribers)
     cursor.execute(
@@ -405,7 +407,7 @@ async def find_channels(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "AND owner_user_id != %s "
         "AND subscriber_count BETWEEN %s AND %s "
         "ORDER BY RAND() LIMIT 10",
-        (channel_username, user_id, target_count - 100, target_count + 100)
+        (channel_username, user_id, max(target_count - diff, 0), target_count + diff)
     )
 
     channels = cursor.fetchall()
