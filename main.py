@@ -708,6 +708,71 @@ async def list_pending(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(text, parse_mode='Markdown')
 
 
+# Command /abuse
+async def report_abuse(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+
+    if len(context.args) < 2:
+        await update.message.reply_text(
+            "❌ Укажите канал и причину жалобы.\n"
+            "Пример: /abuse @badchannel Не делает репосты"
+        )
+        return
+
+    channel_username = context.args[0].strip()
+    if not channel_username.startswith('@'):
+        channel_username = '@' + channel_username
+
+    reason = ' '.join(context.args[1:])
+
+    conn = Database.get_connection()
+    if not conn:
+        await update.message.reply_text("❌ Ошибка. Пожалуйста, попробуйте повторить попытку позже.")
+        return
+
+    cursor = conn.cursor()
+
+    # Checking the existence of the channel
+    cursor.execute(
+        "SELECT id, owner_user_id FROM channels WHERE channel_username = %s",
+        (channel_username,)
+    )
+
+    target_channel = cursor.fetchone()
+    if not target_channel:
+        await update.message.reply_text(
+            f"❌ Канал *{channel_username}* не найден в каталоге.",
+            parse_mode='Markdown'
+        )
+        cursor.close()
+        conn.close()
+        return
+
+    if user_id == target_channel[1]:
+        await update.message.reply_text(
+            f"❌ Вы не можете пожаловаться на свой канал.",
+        )
+        cursor.close()
+        conn.close()
+        return
+
+    # Saving the complaint
+    cursor.execute(
+        "INSERT INTO abuse_reports (reporter_user_id, channel_username, reason) "
+        "VALUES (%s, %s, %s)",
+        (user_id, channel_username, reason)
+    )
+    conn.commit()
+    cursor.close()
+    conn.close()
+
+    await update.message.reply_text(
+        f"✅ Жалоба на канал *{channel_username}* зарегистрирована.\n"
+        "Спасибо за информацию!",
+        parse_mode='Markdown'
+    )
+
+
 # Error handler
 async def error_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     logger.error(f"Update {update} caused error {context.error}")
@@ -731,7 +796,7 @@ def main():
     application.add_handler(CommandHandler("done", done_repost))
     application.add_handler(CommandHandler("confirm", confirm_repost))
     application.add_handler(CommandHandler("list", list_pending))
-    # application.add_handler(CommandHandler("abuse", report_abuse))
+    application.add_handler(CommandHandler("abuse", report_abuse))
 
     # Error handler
     application.add_error_handler(error_handler)
