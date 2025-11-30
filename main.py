@@ -415,13 +415,15 @@ async def find_channels(update: Update, context: ContextTypes.DEFAULT_TYPE):
     target_count = result['subscriber_count']
     diff = math.ceil(max(target_count, 100) * 0.2)
 
-    # Looking for similar channels (±100 subscribers)
+    # Looking for similar channels (±100 subscribers) with repost counts
     cursor.execute(
-        "SELECT channel_username, subscriber_count "
-        "FROM channels "
-        "WHERE channel_username != %s "
-        "AND owner_user_id != %s "
-        "AND subscriber_count BETWEEN %s AND %s "
+        "SELECT c.channel_username, c.subscriber_count, "
+        "(SELECT COUNT(*) FROM reposts r WHERE r.to_channel = c.channel_username AND r.status = 'confirmed') as confirmed_count, "
+        "(SELECT COUNT(*) FROM reposts r WHERE r.to_channel = c.channel_username AND r.status = 'pending') as pending_count "
+        "FROM channels c "
+        "WHERE c.channel_username != %s "
+        "AND c.owner_user_id != %s "
+        "AND c.subscriber_count BETWEEN %s AND %s "
         "ORDER BY RAND() LIMIT 10",
         (channel_username, user_id, max(target_count - diff, 0), target_count + diff)
     )
@@ -440,7 +442,8 @@ async def find_channels(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     text = f"🔍 *Найдено {len(channels)} похожих каналов:*\n\n"
     for ch in channels:
-        text += f"• *{ch['channel_username']}* - 👥 {ch['subscriber_count']} подписчиков\n"
+        text += (f"• *{ch['channel_username']}* - 👥 {ch['subscriber_count']} подписчиков\n"
+                 f"  ✅ Подтверждено: {ch['confirmed_count']} | ⏳ Ожидает: {ch['pending_count']}\n")
 
     text += "\n💡 Подпишитесь на канал, сделайте репост и используйте /done *[канал]*."
 
