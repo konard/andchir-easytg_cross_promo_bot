@@ -116,6 +116,7 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 /done *[канал]* - Сообщить владельцу канала о выполненном репосте
 /confirm *[свой_канал]* *[канал_репоста]* - Подтвердить репост
 /list - Список каналов, ожидающих подтверждения
+/stat - Показать статистику бота
 /abuse *[канал]* *[причина]* - Пожаловаться на канал и владельца
 /help - Показать эту справку
 
@@ -708,6 +709,40 @@ async def list_pending(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(text, parse_mode='Markdown')
 
 
+# Command /stat
+async def show_statistics(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    conn = Database.get_connection()
+    if not conn:
+        await update.message.reply_text("❌ Ошибка. Пожалуйста, попробуйте повторить попытку позже.")
+        return
+
+    cursor = conn.cursor(dictionary=True)
+
+    # Get total number of channels
+    cursor.execute("SELECT COUNT(*) as total FROM channels")
+    channels_count = cursor.fetchone()['total']
+
+    # Get total number of confirmed reposts
+    cursor.execute("SELECT COUNT(*) as total FROM reposts WHERE status = 'confirmed'")
+    confirmed_count = cursor.fetchone()['total']
+
+    # Get total number of pending reposts
+    cursor.execute("SELECT COUNT(*) as total FROM reposts WHERE status = 'pending'")
+    pending_count = cursor.fetchone()['total']
+
+    cursor.close()
+    conn.close()
+
+    text = (
+        "📊 *Статистика бота:*\n\n"
+        f"📺 Всего каналов: *{channels_count}*\n"
+        f"✅ Подтверждённых репостов: *{confirmed_count}*\n"
+        f"⏳ Ожидают подтверждения: *{pending_count}*"
+    )
+
+    await update.message.reply_text(text, parse_mode='Markdown')
+
+
 # Command /abuse
 async def report_abuse(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
@@ -796,6 +831,7 @@ def main():
     application.add_handler(CommandHandler("done", done_repost))
     application.add_handler(CommandHandler("confirm", confirm_repost))
     application.add_handler(CommandHandler("list", list_pending))
+    application.add_handler(CommandHandler("stat", show_statistics))
     application.add_handler(CommandHandler("abuse", report_abuse))
 
     # Error handler
