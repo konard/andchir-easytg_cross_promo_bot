@@ -2,7 +2,7 @@ import logging
 import math
 import os
 
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, BotCommand
 from telegram.ext import Application, CommandHandler, ContextTypes, MessageHandler, filters
 import mysql.connector
 from mysql.connector import Error
@@ -826,12 +826,33 @@ async def error_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     logger.error(f"Update {update} caused error {context.error}")
 
 
+# Post-initialization hook to set up bot commands menu
+async def post_init(application: Application) -> None:
+    """Set up bot commands menu after initialization"""
+    commands = [
+        BotCommand("start", "Запустить бота"),
+        BotCommand("help", "Показать справку по командам"),
+        BotCommand("add", "Добавить свой канал в каталог"),
+        BotCommand("my", "Показать мои каналы"),
+        BotCommand("delete", "Удалить канал из каталога"),
+        BotCommand("update", "Обновить количество подписчиков"),
+        BotCommand("find", "Найти похожие каналы для обмена"),
+        BotCommand("done", "Сообщить о выполненном репосте"),
+        BotCommand("confirm", "Подтвердить репост"),
+        BotCommand("list", "Список ожидающих подтверждения"),
+        BotCommand("stat", "Показать статистику бота"),
+        BotCommand("abuse", "Пожаловаться на канал"),
+    ]
+    await application.bot.set_my_commands(commands)
+    logger.info("Bot commands menu has been set up")
+
+
 def main():
     # Database initialization
     Database.init_db()
 
     # Creating an application
-    application = Application.builder().token(BOT_TOKEN).build()
+    application = Application.builder().token(BOT_TOKEN).post_init(post_init).build()
 
     # Registering command handlers
     application.add_handler(CommandHandler("start", start))
