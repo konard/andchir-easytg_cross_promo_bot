@@ -1,0 +1,84 @@
+# VK Bot для обмена аудиторией между группами
+
+VK бот для взаимных репостов и обмена аудиторией между сообществами ВКонтакте.
+
+## Команды бота
+
+*Справка по командам:*
+
+**добавить [группа]** - Добавить свою группу в каталог
+**мои** - Показать мои группы
+**удалить [группа]** - Удалить группу из каталога
+**обновить [группа]** - Обновить количество подписчиков
+**найти [группа]** - Найти похожие группы для обмена
+**готово [группа]** - Сообщить владельцу группы о выполненном репосте
+**подтвердить [своя_группа] [группа_репоста]** - Подтвердить репост
+**список** - Список групп, ожидающих подтверждения
+**статистика** - Показать статистику бота
+**жалоба [группа] [причина]** - Пожаловаться на группу и владельца
+**помощь** - Показать эту справку
+
+*Как это работает:*
+1. Добавьте свою группу командой **добавить**
+2. Найдите похожие группы **найти**
+3. Подпишитесь и сделайте репост любого поста
+4. Сообщите **готово** после репоста
+5. Владелец группы подтвердит **подтвердить**
+6. Ожидайте ответного репоста
+
+## Настройка и развертывание
+
+### Требования
+
+- Публичный URL для webhook (например, `https://example.com/vk_callback`)
+- Настроенный Callback API сервер в настройках VK сообщества
+- Confirmation code из настроек Callback API
+- MySQL база данных для VK бота
+
+### Конфигурация
+
+VK бот работает через VK Callback API и использует Flask для обработки webhook-запросов.
+
+**Параметры в .env файле:**
+```
+VK_DB_NAME=easytg_cross_promo_bot_vk
+VK_DB_USER_NAME=easytg_cross_promo_bot_vk
+VK_DB_USER_PASSWORD=xxx
+VK_ACCESS_TOKEN=xxx
+VK_GROUP_ID=xxx
+VK_CONFIRMATION_CODE=xxx
+VK_FLASK_HOST=0.0.0.0
+VK_FLASK_PORT=5000
+```
+
+### Настройка VK Callback API
+
+1. В настройках сообщества перейдите в "Работа с API" → "Callback API"
+2. Добавьте новый сервер с URL: `http://your-server:5000/vk_callback`
+3. Скопируйте confirmation code в переменную `VK_CONFIRMATION_CODE`
+4. Включите событие "Входящее сообщение" (message_new)
+5. Получите access token группы с правами на отправку сообщений
+
+### Развертывание через systemd
+
+Создайте systemd service файл:
+
+```bash
+sudo nano /etc/systemd/system/easytg_cross_promo_bot_vk.service
+```
+
+Запустите сервис:
+
+```bash
+sudo systemctl daemon-reload
+sudo systemctl enable easytg_cross_promo_bot_vk
+sudo systemctl start easytg_cross_promo_bot_vk
+sudo systemctl status easytg_cross_promo_bot_vk
+```
+
+## Документация VK API
+
+- [VK Callback API](https://dev.vk.com/ru/api/callback/getting-started)
+- [Событие message_new](https://dev.vk.com/ru/api/community-events/json-schema#message_new)
+- [Отправка сообщений](https://dev.vk.com/ru/method/messages.send)
+- [Клавиатура для ботов](https://dev.vk.com/ru/api/bots/development/keyboard)
