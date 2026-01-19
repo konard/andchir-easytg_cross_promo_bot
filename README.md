@@ -1,5 +1,7 @@
 # A Telegram bot for mutual reposts and audience sharing
 
+## В разработке !
+
 *Справка по командам:*
 
 - **/add** - Добавить свой канал в каталог
