@@ -4,7 +4,7 @@ import os
 import json
 import re
 
-from flask import Flask, request
+from flask import Flask, request, render_template_string, redirect, url_for, session
 import mysql.connector
 from mysql.connector import Error
 import requests
@@ -32,7 +32,19 @@ VK_CONFIRMATION_CODE = os.environ['VK_CONFIRMATION_CODE']
 VK_FLASK_HOST = os.environ.get('VK_FLASK_HOST', '0.0.0.0')
 VK_FLASK_PORT = int(os.environ.get('VK_FLASK_PORT', '5000'))
 
+# Admin interface configuration
+ADMIN_PASSWORD = os.environ.get('ADMIN_PASSWORD', '')
+
+# Telegram database configuration (for admin interface)
+TG_DB_CONFIG = {
+    'host': 'localhost',
+    'database': os.environ.get('DB_NAME', ''),
+    'user': os.environ.get('DB_USER_NAME', ''),
+    'password': os.environ.get('DB_USER_PASSWORD', '')
+}
+
 app = Flask(__name__)
+app.secret_key = os.environ.get('FLASK_SECRET_KEY', os.urandom(24))
 
 
 class VKDatabase:
@@ -99,6 +111,556 @@ class VKDatabase:
         cursor.close()
         conn.close()
         logger.info("The VK database has been initialized.")
+
+
+class TGDatabase:
+    """Telegram database access for admin interface"""
+
+    @staticmethod
+    def get_connection():
+        if not TG_DB_CONFIG['database']:
+            return None
+        try:
+            conn = mysql.connector.connect(**TG_DB_CONFIG)
+            return conn
+        except Error as e:
+            logger.error(f"Error connecting to the Telegram database: {e}")
+            return None
+
+
+# Admin interface constants
+ITEMS_PER_PAGE = 20
+
+
+def get_admin_base_template():
+    """Return the base HTML template for admin interface"""
+    return '''
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Админ-панель бота</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.8/dist/css/bootstrap.min.css" rel="stylesheet" integrity="sha384-sRIl4kxILFvY47J16cr9ZwB07vP4J8+LH7qKQnuqkuIAvNWLzeN8tE5YBujZqJLB" crossorigin="anonymous">
+    <style>
+        .nav-pills .nav-link.active { background-color: #0d6efd; }
+        .table-responsive { margin-top: 20px; }
+        .pagination { margin-top: 20px; }
+        .search-form { margin-bottom: 20px; }
+    </style>
+</head>
+<body>
+    <div class="container mt-4">
+        <h1 class="mb-4">Админ-панель бота</h1>
+        {% block content %}{% endblock %}
+    </div>
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.8/dist/js/bootstrap.bundle.min.js" integrity="sha384-T3BcNqdY3F5V4Y3mL9A8u1a3ZC6iO6p3kfH1sF5BReGc3c0E6C9e8D2F6GRtI3Rv" crossorigin="anonymous"></script>
+</body>
+</html>
+'''
+
+
+def get_login_template():
+    """Return the login page template"""
+    return '''
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Вход в админ-панель</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.8/dist/css/bootstrap.min.css" rel="stylesheet" integrity="sha384-sRIl4kxILFvY47J16cr9ZwB07vP4J8+LH7qKQnuqkuIAvNWLzeN8tE5YBujZqJLB" crossorigin="anonymous">
+</head>
+<body>
+    <div class="container mt-5">
+        <div class="row justify-content-center">
+            <div class="col-md-4">
+                <div class="card">
+                    <div class="card-header">
+                        <h4 class="mb-0">Вход в админ-панель</h4>
+                    </div>
+                    <div class="card-body">
+                        {% if error %}
+                        <div class="alert alert-danger">{{ error }}</div>
+                        {% endif %}
+                        <form method="POST">
+                            <div class="mb-3">
+                                <label for="password" class="form-label">Пароль</label>
+                                <input type="password" class="form-control" id="password" name="password" required>
+                            </div>
+                            <button type="submit" class="btn btn-primary w-100">Войти</button>
+                        </form>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</body>
+</html>
+'''
+
+
+def get_admin_template():
+    """Return the main admin page template"""
+    return '''
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Админ-панель бота</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.8/dist/css/bootstrap.min.css" rel="stylesheet" integrity="sha384-sRIl4kxILFvY47J16cr9ZwB07vP4J8+LH7qKQnuqkuIAvNWLzeN8tE5YBujZqJLB" crossorigin="anonymous">
+    <style>
+        .nav-pills .nav-link.active { background-color: #0d6efd; }
+        .table-responsive { margin-top: 20px; }
+        .pagination { margin-top: 20px; }
+        .search-form { margin-bottom: 20px; }
+        .sub-nav { margin-top: 20px; margin-bottom: 20px; }
+    </style>
+</head>
+<body>
+    <div class="container mt-4">
+        <div class="d-flex justify-content-between align-items-center mb-4">
+            <h1>Админ-панель бота</h1>
+            <a href="{{ url_for('admin_logout') }}" class="btn btn-outline-secondary">Выйти</a>
+        </div>
+
+        <!-- Platform tabs -->
+        <ul class="nav nav-pills mb-3" id="platformTabs" role="tablist">
+            <li class="nav-item" role="presentation">
+                <a class="nav-link {% if platform == 'telegram' %}active{% endif %}" href="{{ url_for('bot_admin', platform='telegram', section=section) }}">Телеграм</a>
+            </li>
+            <li class="nav-item" role="presentation">
+                <a class="nav-link {% if platform == 'vk' %}active{% endif %}" href="{{ url_for('bot_admin', platform='vk', section=section) }}">ВКонтакте</a>
+            </li>
+        </ul>
+
+        <!-- Section tabs -->
+        <ul class="nav nav-tabs sub-nav" id="sectionTabs" role="tablist">
+            <li class="nav-item" role="presentation">
+                <a class="nav-link {% if section == 'channels' %}active{% endif %}" href="{{ url_for('bot_admin', platform=platform, section='channels') }}">Группы</a>
+            </li>
+            <li class="nav-item" role="presentation">
+                <a class="nav-link {% if section == 'reposts' %}active{% endif %}" href="{{ url_for('bot_admin', platform=platform, section='reposts') }}">Репосты</a>
+            </li>
+            <li class="nav-item" role="presentation">
+                <a class="nav-link {% if section == 'reports' %}active{% endif %}" href="{{ url_for('bot_admin', platform=platform, section='reports') }}">Жалобы</a>
+            </li>
+        </ul>
+
+        {% if section == 'channels' %}
+        <!-- Search form for channels -->
+        <form class="search-form" method="GET">
+            <input type="hidden" name="platform" value="{{ platform }}">
+            <input type="hidden" name="section" value="{{ section }}">
+            <div class="row">
+                <div class="col-md-4">
+                    <div class="input-group">
+                        <input type="text" class="form-control" name="search" value="{{ search }}" placeholder="Поиск по названию...">
+                        <button class="btn btn-outline-primary" type="submit">Поиск</button>
+                        {% if search %}
+                        <a href="{{ url_for('bot_admin', platform=platform, section=section) }}" class="btn btn-outline-secondary">Сбросить</a>
+                        {% endif %}
+                    </div>
+                </div>
+            </div>
+        </form>
+        {% endif %}
+
+        {% if error %}
+        <div class="alert alert-warning">{{ error }}</div>
+        {% endif %}
+
+        {% if items %}
+        <div class="table-responsive">
+            {% if section == 'channels' %}
+            <table class="table table-striped table-hover">
+                <thead>
+                    <tr>
+                        <th>ID</th>
+                        <th>Название</th>
+                        <th>ID канала</th>
+                        <th>ID владельца</th>
+                        <th>Подписчиков</th>
+                        <th>Дата добавления</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for item in items %}
+                    <tr>
+                        <td>{{ item.id }}</td>
+                        <td>{{ item.channel_username }}</td>
+                        <td>{{ item.channel_id or '-' }}</td>
+                        <td>{{ item.owner_user_id }}</td>
+                        <td>{{ item.subscriber_count }}</td>
+                        <td>{{ item.added_date.strftime('%d.%m.%Y %H:%M') if item.added_date else '-' }}</td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+            {% elif section == 'reposts' %}
+            <table class="table table-striped table-hover">
+                <thead>
+                    <tr>
+                        <th>ID</th>
+                        <th>От канала</th>
+                        <th>Для канала</th>
+                        <th>ID отправителя</th>
+                        <th>ID получателя</th>
+                        <th>Статус</th>
+                        <th>Дата создания</th>
+                        <th>Дата подтверждения</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for item in items %}
+                    <tr>
+                        <td>{{ item.id }}</td>
+                        <td>{{ item.from_channel }}</td>
+                        <td>{{ item.to_channel }}</td>
+                        <td>{{ item.from_user_id }}</td>
+                        <td>{{ item.to_user_id }}</td>
+                        <td>
+                            {% if item.status == 'pending' %}
+                            <span class="badge bg-warning">Ожидает</span>
+                            {% elif item.status == 'confirmed' %}
+                            <span class="badge bg-success">Подтверждён</span>
+                            {% elif item.status == 'rejected' %}
+                            <span class="badge bg-danger">Отклонён</span>
+                            {% else %}
+                            {{ item.status }}
+                            {% endif %}
+                        </td>
+                        <td>{{ item.created_date.strftime('%d.%m.%Y %H:%M') if item.created_date else '-' }}</td>
+                        <td>{{ item.confirmed_date.strftime('%d.%m.%Y %H:%M') if item.confirmed_date else '-' }}</td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+            {% elif section == 'reports' %}
+            <table class="table table-striped table-hover">
+                <thead>
+                    <tr>
+                        <th>ID</th>
+                        <th>ID заявителя</th>
+                        <th>Канал</th>
+                        <th>Причина</th>
+                        <th>Дата</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for item in items %}
+                    <tr>
+                        <td>{{ item.id }}</td>
+                        <td>{{ item.reporter_user_id }}</td>
+                        <td>{{ item.channel_username }}</td>
+                        <td>{{ item.reason }}</td>
+                        <td>{{ item.report_date.strftime('%d.%m.%Y %H:%M') if item.report_date else '-' }}</td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+            {% endif %}
+        </div>
+
+        <!-- Pagination -->
+        {% if total_pages > 1 %}
+        <nav aria-label="Page navigation">
+            <ul class="pagination justify-content-center">
+                {% if page > 1 %}
+                <li class="page-item">
+                    <a class="page-link" href="{{ url_for('bot_admin', platform=platform, section=section, page=page-1, search=search) }}">Назад</a>
+                </li>
+                {% endif %}
+
+                {% for p in range(1, total_pages + 1) %}
+                    {% if p == page %}
+                    <li class="page-item active"><span class="page-link">{{ p }}</span></li>
+                    {% elif p == 1 or p == total_pages or (p >= page - 2 and p <= page + 2) %}
+                    <li class="page-item"><a class="page-link" href="{{ url_for('bot_admin', platform=platform, section=section, page=p, search=search) }}">{{ p }}</a></li>
+                    {% elif p == page - 3 or p == page + 3 %}
+                    <li class="page-item disabled"><span class="page-link">...</span></li>
+                    {% endif %}
+                {% endfor %}
+
+                {% if page < total_pages %}
+                <li class="page-item">
+                    <a class="page-link" href="{{ url_for('bot_admin', platform=platform, section=section, page=page+1, search=search) }}">Вперёд</a>
+                </li>
+                {% endif %}
+            </ul>
+        </nav>
+        <p class="text-center text-muted">Страница {{ page }} из {{ total_pages }} (всего записей: {{ total_count }})</p>
+        {% endif %}
+
+        {% else %}
+        <div class="alert alert-info">Нет данных для отображения.</div>
+        {% endif %}
+    </div>
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.8/dist/js/bootstrap.bundle.min.js" integrity="sha384-T3BcNqdY3F5V4Y3mL9A8u1a3ZC6iO6p3kfH1sF5BReGc3c0E6C9e8D2F6GRtI3Rv" crossorigin="anonymous"></script>
+</body>
+</html>
+'''
+
+
+def admin_get_vk_channels(page=1, search=''):
+    """Get VK channels with pagination and search"""
+    conn = VKDatabase.get_connection()
+    if not conn:
+        return [], 0, 0
+
+    cursor = conn.cursor(dictionary=True)
+    offset = (page - 1) * ITEMS_PER_PAGE
+
+    if search:
+        cursor.execute(
+            "SELECT COUNT(*) as total FROM vk_channels WHERE channel_username LIKE %s",
+            (f'%{search}%',)
+        )
+        total_count = cursor.fetchone()['total']
+
+        cursor.execute(
+            "SELECT * FROM vk_channels WHERE channel_username LIKE %s ORDER BY added_date DESC LIMIT %s OFFSET %s",
+            (f'%{search}%', ITEMS_PER_PAGE, offset)
+        )
+    else:
+        cursor.execute("SELECT COUNT(*) as total FROM vk_channels")
+        total_count = cursor.fetchone()['total']
+
+        cursor.execute(
+            "SELECT * FROM vk_channels ORDER BY added_date DESC LIMIT %s OFFSET %s",
+            (ITEMS_PER_PAGE, offset)
+        )
+
+    items = cursor.fetchall()
+    cursor.close()
+    conn.close()
+
+    total_pages = math.ceil(total_count / ITEMS_PER_PAGE) if total_count > 0 else 1
+    return items, total_count, total_pages
+
+
+def admin_get_vk_reposts(page=1):
+    """Get VK reposts with pagination"""
+    conn = VKDatabase.get_connection()
+    if not conn:
+        return [], 0, 0
+
+    cursor = conn.cursor(dictionary=True)
+    offset = (page - 1) * ITEMS_PER_PAGE
+
+    cursor.execute("SELECT COUNT(*) as total FROM vk_reposts")
+    total_count = cursor.fetchone()['total']
+
+    cursor.execute(
+        "SELECT * FROM vk_reposts ORDER BY created_date DESC LIMIT %s OFFSET %s",
+        (ITEMS_PER_PAGE, offset)
+    )
+
+    items = cursor.fetchall()
+    cursor.close()
+    conn.close()
+
+    total_pages = math.ceil(total_count / ITEMS_PER_PAGE) if total_count > 0 else 1
+    return items, total_count, total_pages
+
+
+def admin_get_vk_reports(page=1):
+    """Get VK abuse reports with pagination"""
+    conn = VKDatabase.get_connection()
+    if not conn:
+        return [], 0, 0
+
+    cursor = conn.cursor(dictionary=True)
+    offset = (page - 1) * ITEMS_PER_PAGE
+
+    cursor.execute("SELECT COUNT(*) as total FROM vk_abuse_reports")
+    total_count = cursor.fetchone()['total']
+
+    cursor.execute(
+        "SELECT * FROM vk_abuse_reports ORDER BY report_date DESC LIMIT %s OFFSET %s",
+        (ITEMS_PER_PAGE, offset)
+    )
+
+    items = cursor.fetchall()
+    cursor.close()
+    conn.close()
+
+    total_pages = math.ceil(total_count / ITEMS_PER_PAGE) if total_count > 0 else 1
+    return items, total_count, total_pages
+
+
+def admin_get_tg_channels(page=1, search=''):
+    """Get Telegram channels with pagination and search"""
+    conn = TGDatabase.get_connection()
+    if not conn:
+        return [], 0, 0
+
+    cursor = conn.cursor(dictionary=True)
+    offset = (page - 1) * ITEMS_PER_PAGE
+
+    if search:
+        cursor.execute(
+            "SELECT COUNT(*) as total FROM channels WHERE channel_username LIKE %s",
+            (f'%{search}%',)
+        )
+        total_count = cursor.fetchone()['total']
+
+        cursor.execute(
+            "SELECT * FROM channels WHERE channel_username LIKE %s ORDER BY added_date DESC LIMIT %s OFFSET %s",
+            (f'%{search}%', ITEMS_PER_PAGE, offset)
+        )
+    else:
+        cursor.execute("SELECT COUNT(*) as total FROM channels")
+        total_count = cursor.fetchone()['total']
+
+        cursor.execute(
+            "SELECT * FROM channels ORDER BY added_date DESC LIMIT %s OFFSET %s",
+            (ITEMS_PER_PAGE, offset)
+        )
+
+    items = cursor.fetchall()
+    cursor.close()
+    conn.close()
+
+    total_pages = math.ceil(total_count / ITEMS_PER_PAGE) if total_count > 0 else 1
+    return items, total_count, total_pages
+
+
+def admin_get_tg_reposts(page=1):
+    """Get Telegram reposts with pagination"""
+    conn = TGDatabase.get_connection()
+    if not conn:
+        return [], 0, 0
+
+    cursor = conn.cursor(dictionary=True)
+    offset = (page - 1) * ITEMS_PER_PAGE
+
+    cursor.execute("SELECT COUNT(*) as total FROM reposts")
+    total_count = cursor.fetchone()['total']
+
+    cursor.execute(
+        "SELECT * FROM reposts ORDER BY created_date DESC LIMIT %s OFFSET %s",
+        (ITEMS_PER_PAGE, offset)
+    )
+
+    items = cursor.fetchall()
+    cursor.close()
+    conn.close()
+
+    total_pages = math.ceil(total_count / ITEMS_PER_PAGE) if total_count > 0 else 1
+    return items, total_count, total_pages
+
+
+def admin_get_tg_reports(page=1):
+    """Get Telegram abuse reports with pagination"""
+    conn = TGDatabase.get_connection()
+    if not conn:
+        return [], 0, 0
+
+    cursor = conn.cursor(dictionary=True)
+    offset = (page - 1) * ITEMS_PER_PAGE
+
+    cursor.execute("SELECT COUNT(*) as total FROM abuse_reports")
+    total_count = cursor.fetchone()['total']
+
+    cursor.execute(
+        "SELECT * FROM abuse_reports ORDER BY report_date DESC LIMIT %s OFFSET %s",
+        (ITEMS_PER_PAGE, offset)
+    )
+
+    items = cursor.fetchall()
+    cursor.close()
+    conn.close()
+
+    total_pages = math.ceil(total_count / ITEMS_PER_PAGE) if total_count > 0 else 1
+    return items, total_count, total_pages
+
+
+@app.route('/bot_admin')
+def bot_admin():
+    """Admin interface main page"""
+    # Check if admin password is configured
+    if not ADMIN_PASSWORD:
+        return "Admin interface is not configured. Please set ADMIN_PASSWORD in .env", 503
+
+    # Check if user is logged in
+    if not session.get('admin_logged_in'):
+        return redirect(url_for('admin_login'))
+
+    platform = request.args.get('platform', 'telegram')
+    section = request.args.get('section', 'channels')
+    page = int(request.args.get('page', 1))
+    search = request.args.get('search', '')
+
+    items = []
+    total_count = 0
+    total_pages = 1
+    error = None
+
+    if platform == 'telegram':
+        if section == 'channels':
+            items, total_count, total_pages = admin_get_tg_channels(page, search)
+            if not items and not search:
+                error = "Не удалось подключиться к базе данных Telegram или таблица пуста."
+        elif section == 'reposts':
+            items, total_count, total_pages = admin_get_tg_reposts(page)
+            if not items:
+                error = "Не удалось подключиться к базе данных Telegram или таблица пуста."
+        elif section == 'reports':
+            items, total_count, total_pages = admin_get_tg_reports(page)
+            if not items:
+                error = "Не удалось подключиться к базе данных Telegram или таблица пуста."
+    else:  # vk
+        if section == 'channels':
+            items, total_count, total_pages = admin_get_vk_channels(page, search)
+            if not items and not search:
+                error = "Не удалось подключиться к базе данных VK или таблица пуста."
+        elif section == 'reposts':
+            items, total_count, total_pages = admin_get_vk_reposts(page)
+            if not items:
+                error = "Не удалось подключиться к базе данных VK или таблица пуста."
+        elif section == 'reports':
+            items, total_count, total_pages = admin_get_vk_reports(page)
+            if not items:
+                error = "Не удалось подключиться к базе данных VK или таблица пуста."
+
+    return render_template_string(
+        get_admin_template(),
+        platform=platform,
+        section=section,
+        page=page,
+        search=search,
+        items=items,
+        total_count=total_count,
+        total_pages=total_pages,
+        error=error
+    )
+
+
+@app.route('/bot_admin/login', methods=['GET', 'POST'])
+def admin_login():
+    """Admin login page"""
+    if not ADMIN_PASSWORD:
+        return "Admin interface is not configured. Please set ADMIN_PASSWORD in .env", 503
+
+    error = None
+    if request.method == 'POST':
+        password = request.form.get('password', '')
+        if password == ADMIN_PASSWORD:
+            session['admin_logged_in'] = True
+            return redirect(url_for('bot_admin'))
+        else:
+            error = "Неверный пароль"
+
+    return render_template_string(get_login_template(), error=error)
+
+
+@app.route('/bot_admin/logout')
+def admin_logout():
+    """Admin logout"""
+    session.pop('admin_logged_in', None)
+    return redirect(url_for('admin_login'))
 
 
 def remove_emoji(text):
