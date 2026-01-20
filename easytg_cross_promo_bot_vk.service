@@ -6,9 +6,9 @@ After=network.target mysql.service
 Type=simple
 User=www-data
 Group=www-data
-WorkingDirectory=/var/www/easytg_cross_promo_bot
-Environment="PATH=/usr/bin:/usr/local/bin"
-ExecStart=/usr/bin/python3 /var/www/easytg_cross_promo_bot/vk_bot.py
+WorkingDirectory=/home/username/easytg_cross_promo_bot
+Environment=PATH=/home/username/easytg_cross_promo_bot/venv/bin
+ExecStart=/home/username/easytg_cross_promo_bot/venv/bin/python vk_bot.py
 Restart=always
 RestartSec=10
 
