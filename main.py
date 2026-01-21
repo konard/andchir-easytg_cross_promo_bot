@@ -557,9 +557,9 @@ async def done_repost(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await context.bot.send_message(
                 chat_id=to_user_id,
                 text=f"🔔 *Новое уведомление о репосте!*\n\n"
-                     f"Канал *{from_channel}* сообщает, что сделал репост для *{to_channel}* на канале *{repost_channel}*.\n\n"
+                     f"Канал *{repost_channel}* сообщает, что сделал репост для *{to_channel}*.\n\n"
                      f"Проверьте и подтвердите командой:\n"
-                     f"/confirm *{to_channel}* *{from_channel}*",
+                     f"/confirm *{to_channel}* *{repost_channel}*",
                 parse_mode='Markdown'
             )
         except Exception as e:

@@ -1198,9 +1198,9 @@ def handle_done_repost(user_id, message_text):
             vk_send_message(
                 to_user_id,
                 f"🔔 Новое уведомление о репосте!\n\n"
-                f"Группа {from_channel} сообщает, что сделала репост для {to_channel} в группе {repost_channel}.\n\n"
+                f"Группа {repost_channel} сообщает, что сделала репост для {to_channel}.\n\n"
                 f"Проверьте и подтвердите командой:\n"
-                f"подтвердить {to_channel} {from_channel}"
+                f"подтвердить {to_channel} {repost_channel}"
             )
         except Exception as e:
             logger.error(f"Failed to send notification: {e}")
