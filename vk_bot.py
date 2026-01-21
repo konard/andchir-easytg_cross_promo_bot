@@ -230,6 +230,7 @@ def get_admin_template():
         .pagination { margin-top: 20px; }
         .search-form { margin-bottom: 20px; }
         .sub-nav { margin-top: 20px; margin-bottom: 20px; }
+        .delete-btn { font-size: 0.875rem; padding: 0.25rem 0.5rem; }
     </style>
 </head>
 <body>
@@ -297,6 +298,7 @@ def get_admin_template():
                         <th>ID владельца</th>
                         <th>Подписчиков</th>
                         <th>Дата добавления</th>
+                        <th>Действия</th>
                     </tr>
                 </thead>
                 <tbody>
@@ -308,6 +310,15 @@ def get_admin_template():
                         <td>{{ item.owner_user_id }}</td>
                         <td>{{ item.subscriber_count }}</td>
                         <td>{{ item.added_date.strftime('%d.%m.%Y %H:%M') if item.added_date else '-' }}</td>
+                        <td>
+                            <form method="POST" action="{{ url_for('admin_delete_channel') }}" style="display: inline;" onsubmit="return confirm('Вы уверены, что хотите удалить канал {{ item.channel_username }}? Все связанные репосты также будут удалены.');">
+                                <input type="hidden" name="platform" value="{{ platform }}">
+                                <input type="hidden" name="channel_id" value="{{ item.id }}">
+                                <input type="hidden" name="return_page" value="{{ page }}">
+                                <input type="hidden" name="return_search" value="{{ search }}">
+                                <button type="submit" class="btn btn-danger btn-sm delete-btn">Удалить</button>
+                            </form>
+                        </td>
                     </tr>
                     {% endfor %}
                 </tbody>
@@ -325,6 +336,7 @@ def get_admin_template():
                         <th>Статус</th>
                         <th>Дата создания</th>
                         <th>Дата подтверждения</th>
+                        <th>Действия</th>
                     </tr>
                 </thead>
                 <tbody>
@@ -349,6 +361,14 @@ def get_admin_template():
                         </td>
                         <td>{{ item.created_date.strftime('%d.%m.%Y %H:%M') if item.created_date else '-' }}</td>
                         <td>{{ item.confirmed_date.strftime('%d.%m.%Y %H:%M') if item.confirmed_date else '-' }}</td>
+                        <td>
+                            <form method="POST" action="{{ url_for('admin_delete_repost') }}" style="display: inline;" onsubmit="return confirm('Вы уверены, что хотите удалить этот репост?');">
+                                <input type="hidden" name="platform" value="{{ platform }}">
+                                <input type="hidden" name="repost_id" value="{{ item.id }}">
+                                <input type="hidden" name="return_page" value="{{ page }}">
+                                <button type="submit" class="btn btn-danger btn-sm delete-btn">Удалить</button>
+                            </form>
+                        </td>
                     </tr>
                     {% endfor %}
                 </tbody>
@@ -677,6 +697,91 @@ def admin_logout():
     """Admin logout"""
     session.pop('admin_logged_in', None)
     return redirect(url_for('admin_login'))
+
+
+@app.route('/bot_admin/delete_channel', methods=['POST'])
+def admin_delete_channel():
+    """Delete a channel from the admin interface"""
+    # Check if admin password is configured
+    if not ADMIN_PASSWORD:
+        return "Admin interface is not configured. Please set ADMIN_PASSWORD in .env", 503
+
+    # Check if user is logged in
+    if not session.get('admin_logged_in'):
+        return redirect(url_for('admin_login'))
+
+    platform = request.form.get('platform', 'telegram')
+    channel_id = request.form.get('channel_id')
+    return_page = request.form.get('return_page', '1')
+    return_search = request.form.get('return_search', '')
+
+    if not channel_id:
+        return redirect(url_for('bot_admin', platform=platform, section='channels', page=return_page, search=return_search))
+
+    try:
+        channel_id = int(channel_id)
+    except (ValueError, TypeError):
+        return redirect(url_for('bot_admin', platform=platform, section='channels', page=return_page, search=return_search))
+
+    if platform == 'telegram':
+        conn = TGDatabase.get_connection()
+        table_name = 'channels'
+    else:  # vk
+        conn = VKDatabase.get_connection()
+        table_name = 'vk_channels'
+
+    if not conn:
+        return redirect(url_for('bot_admin', platform=platform, section='channels', page=return_page, search=return_search))
+
+    cursor = conn.cursor()
+    cursor.execute(f"DELETE FROM {table_name} WHERE id = %s", (channel_id,))
+    conn.commit()
+    cursor.close()
+    conn.close()
+
+    return redirect(url_for('bot_admin', platform=platform, section='channels', page=return_page, search=return_search))
+
+
+@app.route('/bot_admin/delete_repost', methods=['POST'])
+def admin_delete_repost():
+    """Delete a repost from the admin interface"""
+    # Check if admin password is configured
+    if not ADMIN_PASSWORD:
+        return "Admin interface is not configured. Please set ADMIN_PASSWORD in .env", 503
+
+    # Check if user is logged in
+    if not session.get('admin_logged_in'):
+        return redirect(url_for('admin_login'))
+
+    platform = request.form.get('platform', 'telegram')
+    repost_id = request.form.get('repost_id')
+    return_page = request.form.get('return_page', '1')
+
+    if not repost_id:
+        return redirect(url_for('bot_admin', platform=platform, section='reposts', page=return_page))
+
+    try:
+        repost_id = int(repost_id)
+    except (ValueError, TypeError):
+        return redirect(url_for('bot_admin', platform=platform, section='reposts', page=return_page))
+
+    if platform == 'telegram':
+        conn = TGDatabase.get_connection()
+        table_name = 'reposts'
+    else:  # vk
+        conn = VKDatabase.get_connection()
+        table_name = 'vk_reposts'
+
+    if not conn:
+        return redirect(url_for('bot_admin', platform=platform, section='reposts', page=return_page))
+
+    cursor = conn.cursor()
+    cursor.execute(f"DELETE FROM {table_name} WHERE id = %s", (repost_id,))
+    conn.commit()
+    cursor.close()
+    conn.close()
+
+    return redirect(url_for('bot_admin', platform=platform, section='reposts', page=return_page))
 
 
 def remove_emoji(text):
